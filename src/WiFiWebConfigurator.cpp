@@ -255,9 +255,9 @@ void handleNotFound()
 
 void setupWebServer()
 {
-    server.on("/", sendPage());
-    server.on("/wifiConfig", HTTP_POST, handleWiFiInfo());
-    server.onNotFound(handleNotFound());
+    server.on("/", sendPage);
+    server.on("/wifiConfig", HTTP_POST, handleWiFiInfo);
+    server.onNotFound(handleNotFound);
     server.begin();
     Serial.println("HTTP server started");
 }
