@@ -1,5 +1,5 @@
 // wifi.cpp
-#include "wifi.h"
+#include "WiFiWebConfigurator.h"
 
 ESP8266WebServer server(80);
 
