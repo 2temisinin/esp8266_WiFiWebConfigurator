@@ -1,9 +1,10 @@
-#include "WiFiWebConfigurator.h"
+// wifi.cpp
+#include "wifi.h"
 
 ESP8266WebServer server(80);
 
-static const char *ssid_global;
-static const char *password_global;
+static String ssid_global;
+static String password_global;
 static bool ledFlag = false;
 static bool connected = false;
 
@@ -122,7 +123,7 @@ const char *config_page = R"HTML(
       var wifi_info = "ssid=" + encodeURIComponent(ssid) + "&password=" + encodeURIComponent(password);
       xmlhttp.send(wifi_info);
 
-      alert("SSID: " + ssid + "\nPassword: " + password);
+      alert("SSID: " + ssid + "\\nPassword: " + password);
     }
 
     function switch_password() {
@@ -144,120 +145,129 @@ const char *config_page = R"HTML(
 
 void printWiFiInfo()
 {
-    Serial.printf("SSID:%s\r\n", WiFi.SSID().c_str());
-    Serial.printf("Password:%s\r\n", WiFi.psk().c_str());
-    WiFi.printDiag(Serial);
+  Serial.printf("SSID: %s\r\n", WiFi.SSID().c_str());
+  Serial.printf("Password: %s\r\n", WiFi.psk().c_str());
+  WiFi.printDiag(Serial);
 }
 
 void wifiConfiguratorBegin(const char *ap_ssid, const char *ap_password)
 {
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, HIGH);
-    Serial.begin(115200);
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
+  Serial.begin(115200);
 
-    ssid_global = ap_ssid;
-    password_global = ap_password;
-    tryReconnect();
+  ssid_global = String(ap_ssid);
+  password_global = String(ap_password);
 
-    if (!connected)
-    {
-        setupAPMode();
-        setupWebServer();
-    }
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(ssid_global.c_str(), password_global.c_str());
+
+  Serial.println("AP Standby");
+  Serial.printf("IP address: %s\n", WiFi.softAPIP().toString().c_str());
+
+  if (MDNS.begin("esp8266"))
+  {
+    Serial.println("mDNS responder started at: esp8266.local");
+  }
+  else
+  {
+    Serial.println("Error setting up MDNS responder!");
+  }
+
+  setupWebServer();
 }
 
 void wifiConfiguratorLoop()
 {
-    if (!connected)
+  if (!connected)
+  {
+    server.handleClient();
+    MDNS.update();
+
+    if (WiFi.status() == WL_CONNECTED)
     {
-        server.handleClient();
-        MDNS.update();
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            connected = true;
-            printWiFiInfo();
-            server.stop();
-            WiFi.softAPdisconnect(true);
-        }
+      connected = true;
+      printWiFiInfo();
+      server.stop();
+      WiFi.softAPdisconnect(true);
+      digitalWrite(LED_BUILTIN, HIGH);
     }
+  }
 }
 
 void tryReconnect()
 {
-    WiFi.mode(WIFI_STA);
-    WiFi.begin();
-    Serial.print("Reconnect Wi-Fi Waiting......");
-    for (int i = 0; i < 10; i++)
+  WiFi.persistent(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin();
+  Serial.print("Reconnect Wi-Fi Waiting......");
+  for (int i = 0; i < 10; i++)
+  {
+    if (WiFi.status() == WL_CONNECTED)
     {
-        if (WiFi.status() == WL_CONNECTED)
-        {
-            Serial.println("Reconnect Success");
-            printWiFiInfo();
-            connected = true;
-            digitalWrite(LED_BUILTIN, HIGH);
-            return;
-        }
-        else
-        {
-            Serial.print("Try...");
-            ledFlag = !ledFlag;
-            digitalWrite(LED_BUILTIN, ledFlag ? HIGH : LOW);
-            delay(500);
-        }
-    }
-    Serial.println("Reconnect Failed");
-    digitalWrite(LED_BUILTIN, LOW);
-    connected = false;
-}
-
-void setupAPMode()
-{
-    WiFi.mode(WIFI_AP_STA);
-    digitalWrite(LED_BUILTIN, LOW);
-    WiFi.softAP(ssid_global, password_global);
-    Serial.println("AP Standby");
-    Serial.printf("IP address: %s\n", WiFi.softAPIP().toString().c_str());
-    if (MDNS.begin("esp8266"))
-    {
-        Serial.println("mDNS responder started at: esp8266.local");
+      Serial.println("Reconnect Success");
+      printWiFiInfo();
+      connected = true;
+      digitalWrite(LED_BUILTIN, HIGH);
+      return;
     }
     else
     {
-        Serial.println("Error setting up MDNS responder!");
+      Serial.print("Try...");
+      ledFlag = !ledFlag;
+      digitalWrite(LED_BUILTIN, ledFlag ? HIGH : LOW);
+      delay(500);
     }
+  }
+  Serial.println("Reconnect Failed");
+  digitalWrite(LED_BUILTIN, LOW);
+  connected = false;
 }
 
 void sendPage()
 {
-    server.send(200, "text/html", config_page);
+  server.send(200, "text/html", config_page);
 }
 
 void handleWiFiInfo()
 {
-    String wifi_ssid = server.arg("ssid");
-    String wifi_pw = server.arg("password");
-    Serial.println(wifi_ssid);
-    Serial.println(wifi_pw);
-    WiFi.begin(wifi_ssid.c_str(), wifi_pw.c_str());
+  String wifi_ssid = server.arg("ssid");
+  String wifi_pw = server.arg("password");
+  Serial.println("WiFi Config Received:");
+  Serial.println(wifi_ssid);
+  Serial.println(wifi_pw);
+
+  ssid_global = wifi_ssid;
+  password_global = wifi_pw;
+
+  WiFi.persistent(true);
+  WiFi.begin(ssid_global.c_str(), password_global.c_str());
+
+  server.send(200, "text/plain", "WiFi config received. Trying to connect...");
 }
 
 void handleNotFound()
 {
-    digitalWrite(LED_BUILTIN, LOW);
-    String message = "ERROR\n";
-    message += "URI: ";
-    message += server.uri();
-    message += "\nMethod: ";
-    message += (server.method() == HTTP_GET) ? "GET" : "POST";
-    server.send(404, "text/plain", message);
-    digitalWrite(LED_BUILTIN, HIGH);
+  digitalWrite(LED_BUILTIN, LOW);
+  String message = "ERROR\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  server.send(404, "text/plain", message);
+  digitalWrite(LED_BUILTIN, HIGH);
 }
 
 void setupWebServer()
 {
-    server.on("/", sendPage);
-    server.on("/wifiConfig", HTTP_POST, handleWiFiInfo);
-    server.onNotFound(handleNotFound);
-    server.begin();
-    Serial.println("HTTP server started");
+  server.on("/", sendPage);
+  server.on("/wifiConfig", HTTP_POST, handleWiFiInfo);
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("HTTP server started");
+}
+
+bool wifiConnect()
+{
+  return connected;
 }
